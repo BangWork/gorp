@@ -647,7 +647,9 @@ type Tracer interface {
 	TraceOp(op string, query string, args ...interface{}) func(OpResult)
 }
 
-type OpResult struct { // TODO: return error
+type OpResult struct {
+	Err          error
+	RowsAffected int // may be missing in some operations
 }
 
 type GorpLogger interface {
@@ -986,9 +988,9 @@ func (m *DbMap) TruncateTables() error {
 // before/after the INSERT statement if the interface defines them.
 //
 // Panics if any interface in the list has not been registered with AddTable
-func (m *DbMap) Insert(list ...interface{}) error {
+func (m *DbMap) Insert(list ...interface{}) (err error) {
 	if f := tryTrace(m.tracer, "Insert", "", list...); f != nil {
-		defer f(OpResult{})
+		defer func() { f(OpResult{Err: err, RowsAffected: len(list)}) }()
 	}
 	return insert(m, m, list...)
 }
@@ -1003,9 +1005,9 @@ func (m *DbMap) Insert(list ...interface{}) error {
 //
 // Returns an error if SetKeys has not been called on the TableMap
 // Panics if any interface in the list has not been registered with AddTable
-func (m *DbMap) Update(list ...interface{}) (int64, error) {
+func (m *DbMap) Update(list ...interface{}) (result int64, err error) {
 	if f := tryTrace(m.tracer, "Update", "", list...); f != nil {
-		defer f(OpResult{})
+		defer func() { f(OpResult{Err: err, RowsAffected: int(result)}) }()
 	}
 	return update(m, m, list...)
 }
@@ -1020,9 +1022,9 @@ func (m *DbMap) Update(list ...interface{}) (int64, error) {
 //
 // Returns an error if SetKeys has not been called on the TableMap
 // Panics if any interface in the list has not been registered with AddTable
-func (m *DbMap) Delete(list ...interface{}) (int64, error) {
+func (m *DbMap) Delete(list ...interface{}) (result int64, err error) {
 	if f := tryTrace(m.tracer, "Delete", "", list...); f != nil {
-		defer f(OpResult{})
+		defer func() { f(OpResult{Err: err, RowsAffected: int(result)}) }()
 	}
 	return delete(m, m, list...)
 }
@@ -1042,9 +1044,15 @@ func (m *DbMap) Delete(list ...interface{}) (int64, error) {
 //
 // Returns an error if SetKeys has not been called on the TableMap
 // Panics if any interface in the list has not been registered with AddTable
-func (m *DbMap) Get(i interface{}, keys ...interface{}) (interface{}, error) {
+func (m *DbMap) Get(i interface{}, keys ...interface{}) (result interface{}, err error) {
 	if f := tryTrace(m.tracer, "Get", "", keys); f != nil {
-		defer f(OpResult{})
+		defer func() {
+			rowCount := 0
+			if result != nil {
+				rowCount = 1
+			}
+			f(OpResult{Err: err, RowsAffected: rowCount})
+		}()
 	}
 	return get(m, m, i, keys...)
 }
@@ -1068,75 +1076,83 @@ func (m *DbMap) Get(i interface{}, keys ...interface{}) (interface{}, error) {
 // and nil returned.
 //
 // i does NOT need to be registered with AddTable()
-func (m *DbMap) Select(i interface{}, query string, args ...interface{}) ([]interface{}, error) {
+func (m *DbMap) Select(i interface{}, query string, args ...interface{}) (result []interface{}, err error) {
 	if f := tryTrace(m.tracer, "Select", query, args...); f != nil {
-		defer f(OpResult{})
+		defer func() {
+			var rowCount int
+			if v := reflect.Indirect(reflect.ValueOf(i)); v.Kind() == reflect.Slice {
+				rowCount = v.Len()
+			} else {
+				rowCount = len(result)
+			}
+			f(OpResult{Err: err, RowsAffected: rowCount})
+		}()
 	}
 	return hookedselect(m, m, i, query, args...)
 }
 
 // Exec runs an arbitrary SQL statement.  args represent the bind parameters.
 // This is equivalent to running:  Exec() using database/sql
-func (m *DbMap) Exec(query string, args ...interface{}) (sql.Result, error) {
+func (m *DbMap) Exec(query string, args ...interface{}) (result sql.Result, err error) {
 	if f := tryTrace(m.tracer, "Exec", query, args...); f != nil {
-		defer f(OpResult{})
+		defer func() { f(OpResult{Err: err}) }()
 	}
 	m.trace(query, args...)
 	return m.Db.Exec(query, args...)
 }
 
 // SelectInt is a convenience wrapper around the gorp.SelectInt function
-func (m *DbMap) SelectInt(query string, args ...interface{}) (int64, error) {
+func (m *DbMap) SelectInt(query string, args ...interface{}) (result int64, err error) {
 	if f := tryTrace(m.tracer, "SelectInt", query, args...); f != nil {
-		defer f(OpResult{})
+		defer func() { f(OpResult{Err: err}) }()
 	}
 	return SelectInt(m, query, args...)
 }
 
 // SelectNullInt is a convenience wrapper around the gorp.SelectNullInt function
-func (m *DbMap) SelectNullInt(query string, args ...interface{}) (sql.NullInt64, error) {
+func (m *DbMap) SelectNullInt(query string, args ...interface{}) (result sql.NullInt64, err error) {
 	if f := tryTrace(m.tracer, "SelectNullInt", query, args...); f != nil {
-		defer f(OpResult{})
+		defer func() { f(OpResult{Err: err}) }()
 	}
 	return SelectNullInt(m, query, args...)
 }
 
 // SelectFloat is a convenience wrapper around the gorp.SelectFlot function
-func (m *DbMap) SelectFloat(query string, args ...interface{}) (float64, error) {
+func (m *DbMap) SelectFloat(query string, args ...interface{}) (result float64, err error) {
 	if f := tryTrace(m.tracer, "SelectFloat", query, args...); f != nil {
-		defer f(OpResult{})
+		defer func() { f(OpResult{Err: err}) }()
 	}
 	return SelectFloat(m, query, args...)
 }
 
 // SelectNullFloat is a convenience wrapper around the gorp.SelectNullFloat function
-func (m *DbMap) SelectNullFloat(query string, args ...interface{}) (sql.NullFloat64, error) {
+func (m *DbMap) SelectNullFloat(query string, args ...interface{}) (result sql.NullFloat64, err error) {
 	if f := tryTrace(m.tracer, "SelectNullFloat", query, args...); f != nil {
-		defer f(OpResult{})
+		defer func() { f(OpResult{Err: err}) }()
 	}
 	return SelectNullFloat(m, query, args...)
 }
 
 // SelectStr is a convenience wrapper around the gorp.SelectStr function
-func (m *DbMap) SelectStr(query string, args ...interface{}) (string, error) {
+func (m *DbMap) SelectStr(query string, args ...interface{}) (result string, err error) {
 	if f := tryTrace(m.tracer, "SelectStr", query, args...); f != nil {
-		defer f(OpResult{})
+		defer func() { f(OpResult{Err: err}) }()
 	}
 	return SelectStr(m, query, args...)
 }
 
 // SelectNullStr is a convenience wrapper around the gorp.SelectNullStr function
-func (m *DbMap) SelectNullStr(query string, args ...interface{}) (sql.NullString, error) {
+func (m *DbMap) SelectNullStr(query string, args ...interface{}) (result sql.NullString, err error) {
 	if f := tryTrace(m.tracer, "SelectNullStr", query, args...); f != nil {
-		defer f(OpResult{})
+		defer func() { f(OpResult{Err: err}) }()
 	}
 	return SelectNullStr(m, query, args...)
 }
 
 // SelectOne is a convenience wrapper around the gorp.SelectOne function
-func (m *DbMap) SelectOne(holder interface{}, query string, args ...interface{}) error {
+func (m *DbMap) SelectOne(holder interface{}, query string, args ...interface{}) (err error) {
 	if f := tryTrace(m.tracer, "SelectOne", query, args...); f != nil {
-		defer f(OpResult{})
+		defer func() { f(OpResult{Err: err, RowsAffected: 1}) }()
 	}
 	return SelectOne(m, m, holder, query, args...)
 }
@@ -1248,112 +1264,129 @@ func argsString(args ...interface{}) string {
 ///////////////
 
 // Insert has the same behavior as DbMap.Insert(), but runs in a transaction.
-func (t *Transaction) Insert(list ...interface{}) error {
+func (t *Transaction) Insert(list ...interface{}) (err error) {
 	if f := tryTrace(t.dbmap.tracer, "Insert", "", list...); f != nil {
-		defer f(OpResult{})
+		defer func() { f(OpResult{Err: err, RowsAffected: len(list)}) }()
 	}
 	return insert(t.dbmap, t, list...)
 }
 
 // Update had the same behavior as DbMap.Update(), but runs in a transaction.
-func (t *Transaction) Update(list ...interface{}) (int64, error) {
+func (t *Transaction) Update(list ...interface{}) (result int64, err error) {
 	if f := tryTrace(t.dbmap.tracer, "Update", "", list...); f != nil {
-		defer f(OpResult{})
+		defer func() { f(OpResult{Err: err, RowsAffected: int(result)}) }()
 	}
 	return update(t.dbmap, t, list...)
 }
 
 // Delete has the same behavior as DbMap.Delete(), but runs in a transaction.
-func (t *Transaction) Delete(list ...interface{}) (int64, error) {
+func (t *Transaction) Delete(list ...interface{}) (result int64, err error) {
 	if f := tryTrace(t.dbmap.tracer, "Delete", "", list...); f != nil {
-		defer f(OpResult{})
+		defer func() { f(OpResult{Err: err, RowsAffected: int(result)}) }()
 	}
 	return delete(t.dbmap, t, list...)
 }
 
 // Get has the same behavior as DbMap.Get(), but runs in a transaction.
-func (t *Transaction) Get(i interface{}, keys ...interface{}) (interface{}, error) {
+func (t *Transaction) Get(i interface{}, keys ...interface{}) (result interface{}, err error) {
 	if f := tryTrace(t.dbmap.tracer, "Get", "", keys); f != nil {
-		defer f(OpResult{})
+		defer func() {
+			rowCount := 0
+			if result != nil {
+				rowCount = 1
+			}
+			f(OpResult{Err: nil, RowsAffected: rowCount})
+		}()
 	}
 	return get(t.dbmap, t, i, keys...)
 }
 
 // Select has the same behavior as DbMap.Select(), but runs in a transaction.
-func (t *Transaction) Select(i interface{}, query string, args ...interface{}) ([]interface{}, error) {
+func (t *Transaction) Select(i interface{}, query string, args ...interface{}) (result []interface{}, err error) {
 	if f := tryTrace(t.dbmap.tracer, "Select", query, args...); f != nil {
-		defer f(OpResult{})
+		defer func() {
+			var rowCount int
+			if v := reflect.Indirect(reflect.ValueOf(i)); v.Kind() == reflect.Slice {
+				rowCount = v.Len()
+			} else {
+				rowCount = len(result)
+			}
+			f(OpResult{Err: err, RowsAffected: rowCount})
+		}()
 	}
 	return hookedselect(t.dbmap, t, i, query, args...)
 }
 
 // Exec has the same behavior as DbMap.Exec(), but runs in a transaction.
-func (t *Transaction) Exec(query string, args ...interface{}) (sql.Result, error) {
+func (t *Transaction) Exec(query string, args ...interface{}) (result sql.Result, err error) {
 	if f := tryTrace(t.dbmap.tracer, "Exec", query, args...); f != nil {
-		defer f(OpResult{})
+		defer func() { f(OpResult{Err: err}) }()
 	}
 	t.dbmap.trace(query, args...)
 	return t.tx.Exec(query, args...)
 }
 
 // SelectInt is a convenience wrapper around the gorp.SelectInt function.
-func (t *Transaction) SelectInt(query string, args ...interface{}) (int64, error) {
+func (t *Transaction) SelectInt(query string, args ...interface{}) (result int64, err error) {
 	if f := tryTrace(t.dbmap.tracer, "SelectInt", query, args...); f != nil {
-		defer f(OpResult{})
+		defer func() { f(OpResult{Err: err}) }()
 	}
 	return SelectInt(t, query, args...)
 }
 
 // SelectNullInt is a convenience wrapper around the gorp.SelectNullInt function.
-func (t *Transaction) SelectNullInt(query string, args ...interface{}) (sql.NullInt64, error) {
+func (t *Transaction) SelectNullInt(query string, args ...interface{}) (result sql.NullInt64, err error) {
 	if f := tryTrace(t.dbmap.tracer, "SelectNullInt", query, args...); f != nil {
-		defer f(OpResult{})
+		defer func() { f(OpResult{Err: err}) }()
 	}
 	return SelectNullInt(t, query, args...)
 }
 
 // SelectFloat is a convenience wrapper around the gorp.SelectFloat function.
-func (t *Transaction) SelectFloat(query string, args ...interface{}) (float64, error) {
+func (t *Transaction) SelectFloat(query string, args ...interface{}) (result float64, err error) {
 	if f := tryTrace(t.dbmap.tracer, "SelectFloat", query, args...); f != nil {
-		defer f(OpResult{})
+		defer func() { f(OpResult{Err: err}) }()
 	}
 	return SelectFloat(t, query, args...)
 }
 
 // SelectNullFloat is a convenience wrapper around the gorp.SelectNullFloat function.
-func (t *Transaction) SelectNullFloat(query string, args ...interface{}) (sql.NullFloat64, error) {
+func (t *Transaction) SelectNullFloat(query string, args ...interface{}) (result sql.NullFloat64, err error) {
 	if f := tryTrace(t.dbmap.tracer, "SelectNullFloat", query, args...); f != nil {
-		defer f(OpResult{})
+		defer func() { f(OpResult{Err: err}) }()
 	}
 	return SelectNullFloat(t, query, args...)
 }
 
 // SelectStr is a convenience wrapper around the gorp.SelectStr function.
-func (t *Transaction) SelectStr(query string, args ...interface{}) (string, error) {
+func (t *Transaction) SelectStr(query string, args ...interface{}) (result string, err error) {
 	if f := tryTrace(t.dbmap.tracer, "SelectStr", query, args...); f != nil {
-		defer f(OpResult{})
+		defer func() { f(OpResult{Err: err}) }()
 	}
 	return SelectStr(t, query, args...)
 }
 
 // SelectNullStr is a convenience wrapper around the gorp.SelectNullStr function.
-func (t *Transaction) SelectNullStr(query string, args ...interface{}) (sql.NullString, error) {
+func (t *Transaction) SelectNullStr(query string, args ...interface{}) (result sql.NullString, err error) {
 	if f := tryTrace(t.dbmap.tracer, "SelectNullStr", query, args...); f != nil {
-		defer f(OpResult{})
+		defer func() { f(OpResult{Err: err}) }()
 	}
 	return SelectNullStr(t, query, args...)
 }
 
 // SelectOne is a convenience wrapper around the gorp.SelectOne function.
-func (t *Transaction) SelectOne(holder interface{}, query string, args ...interface{}) error {
+func (t *Transaction) SelectOne(holder interface{}, query string, args ...interface{}) (err error) {
 	if f := tryTrace(t.dbmap.tracer, "SelectOne", query, args...); f != nil {
-		defer f(OpResult{})
+		defer func() { f(OpResult{Err: err, RowsAffected: 1}) }()
 	}
 	return SelectOne(t.dbmap, t, holder, query, args...)
 }
 
 // Commit commits the underlying database transaction.
-func (t *Transaction) Commit() error {
+func (t *Transaction) Commit() (err error) {
+	if f := tryTrace(t.dbmap.tracer, "Commit", ""); f != nil {
+		defer func() { f(OpResult{Err: err}) }()
+	}
 	if !t.closed {
 		t.closed = true
 		t.dbmap.trace("commit;")
@@ -1499,7 +1532,6 @@ func SelectNullStr(e SqlExecutor, query string, args ...interface{}) (sql.NullSt
 // and binds the result to holder, which must be a pointer.
 //
 // If no row is found, an error (sql.ErrNoRows specifically) will be returned
-//
 // If more than one row is found, an error will be returned.
 func SelectOne(m *DbMap, e SqlExecutor, holder interface{}, query string, args ...interface{}) error {
 	t := reflect.TypeOf(holder)
