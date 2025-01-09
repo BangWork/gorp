@@ -1,4 +1,4 @@
-package gorp
+package tests
 
 import (
 	"bytes"
@@ -6,10 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	_ "github.com/go-sql-driver/mysql"
-	_ "github.com/lib/pq"
-	_ "github.com/mattn/go-sqlite3"
-	_ "github.com/ziutek/mymysql/godrv"
 	"log"
 	"math/rand"
 	"os"
@@ -17,6 +13,12 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	_ "github.com/go-sql-driver/mysql"
+	_ "github.com/lib/pq"
+	_ "github.com/mattn/go-sqlite3"
+	_ "github.com/ziutek/mymysql/godrv"
+	gorp "gopkg.in/gorp.v1"
 )
 
 // verify interface compliance
@@ -214,7 +216,7 @@ func (me testTypeConverter) ToDb(val interface{}) (interface{}, error) {
 	return val, nil
 }
 
-func (me testTypeConverter) FromDb(target interface{}) (CustomScanner, bool) {
+func (me testTypeConverter) FromDb(target interface{}) (gorp.CustomScanner, bool) {
 	switch target.(type) {
 	case *Person:
 		binder := func(holder, target interface{}) error {
@@ -225,7 +227,7 @@ func (me testTypeConverter) FromDb(target interface{}) (CustomScanner, bool) {
 			b := []byte(*s)
 			return json.Unmarshal(b, target)
 		}
-		return CustomScanner{new(string), target, binder}, true
+		return gorp.CustomScanner{new(string), target, binder}, true
 	case *CustomStringType:
 		binder := func(holder, target interface{}) error {
 			s, ok := holder.(*string)
@@ -239,7 +241,7 @@ func (me testTypeConverter) FromDb(target interface{}) (CustomScanner, bool) {
 			*st = CustomStringType(*s)
 			return nil
 		}
-		return CustomScanner{new(string), target, binder}, true
+		return gorp.CustomScanner{new(string), target, binder}, true
 	case *CustomDate:
 		binder := func(holder, target interface{}) error {
 			t, ok := holder.(*time.Time)
@@ -253,13 +255,13 @@ func (me testTypeConverter) FromDb(target interface{}) (CustomScanner, bool) {
 			dateTarget.Time = *t
 			return nil
 		}
-		return CustomScanner{new(time.Time), target, binder}, true
+		return gorp.CustomScanner{new(time.Time), target, binder}, true
 	}
 
-	return CustomScanner{}, false
+	return gorp.CustomScanner{}, false
 }
 
-func (p *Person) PreInsert(s SqlExecutor) error {
+func (p *Person) PreInsert(s gorp.SqlExecutor) error {
 	p.Created = time.Now().UnixNano()
 	p.Updated = p.Created
 	if p.FName == "badname" {
@@ -268,32 +270,32 @@ func (p *Person) PreInsert(s SqlExecutor) error {
 	return nil
 }
 
-func (p *Person) PostInsert(s SqlExecutor) error {
+func (p *Person) PostInsert(s gorp.SqlExecutor) error {
 	p.LName = "postinsert"
 	return nil
 }
 
-func (p *Person) PreUpdate(s SqlExecutor) error {
+func (p *Person) PreUpdate(s gorp.SqlExecutor) error {
 	p.FName = "preupdate"
 	return nil
 }
 
-func (p *Person) PostUpdate(s SqlExecutor) error {
+func (p *Person) PostUpdate(s gorp.SqlExecutor) error {
 	p.LName = "postupdate"
 	return nil
 }
 
-func (p *Person) PreDelete(s SqlExecutor) error {
+func (p *Person) PreDelete(s gorp.SqlExecutor) error {
 	p.FName = "predelete"
 	return nil
 }
 
-func (p *Person) PostDelete(s SqlExecutor) error {
+func (p *Person) PostDelete(s gorp.SqlExecutor) error {
 	p.LName = "postdelete"
 	return nil
 }
 
-func (p *Person) PostGet(s SqlExecutor) error {
+func (p *Person) PostGet(s gorp.SqlExecutor) error {
 	p.LName = "postget"
 	return nil
 }
