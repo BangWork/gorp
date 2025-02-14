@@ -161,6 +161,7 @@ type DbMap struct {
 	logger    GorpLogger
 	logPrefix string
 	tracer    Tracer
+	dbBrand   string
 }
 
 // TableMap represents a mapping between a Go struct and a database table
@@ -685,6 +686,16 @@ func (m *DbMap) TraceOff() {
 // SetTracer sets the tracer for this DbMap
 func (m *DbMap) SetTracer(tracer Tracer) {
 	m.tracer = tracer
+}
+
+// SetDbBrand sets the brand of the database for this DbMap
+func (m *DbMap) SetDbBrand(brand string) {
+	m.dbBrand = brand
+}
+
+// DbBrand returns the brand of the database for this DbMap
+func (m *DbMap) DbBrand() string {
+	return m.dbBrand
 }
 
 func tryTrace(tracer Tracer, op string, query string, args ...interface{}) func(OpResult) {
