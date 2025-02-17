@@ -161,7 +161,9 @@ type DbMap struct {
 	logger    GorpLogger
 	logPrefix string
 	tracer    Tracer
-	dbBrand   string
+
+	dbBrand        string
+	postBeginHooks []func(tx *Transaction) error
 }
 
 // TableMap represents a mapping between a Go struct and a database table
@@ -609,6 +611,8 @@ type Transaction struct {
 	dbmap  *DbMap
 	tx     *sql.Tx
 	closed bool
+
+	gtid string
 }
 
 // SqlExecutor exposes gorp operations that can be run from Pre/Post
@@ -1175,7 +1179,19 @@ func (m *DbMap) Begin() (*Transaction, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Transaction{m, tx, false}, nil
+	gorpTx := &Transaction{m, tx, false, ""}
+	if m.dbBrand != "" && len(m.postBeginHooks) > 0 {
+		for i, hook := range m.postBeginHooks {
+			if err := hook(gorpTx); err != nil {
+				return nil, fmt.Errorf("post begin hook %d failed: %v", i, err)
+			}
+		}
+	}
+	return gorpTx, nil
+}
+
+func (m *DbMap) SetPostBeginHooks(hooks ...func(*Transaction) error) {
+	m.postBeginHooks = append(m.postBeginHooks, hooks...)
 }
 
 // TableFor returns the *TableMap corresponding to the given Go Type
@@ -1462,6 +1478,14 @@ func (t *Transaction) queryRow(query string, args ...interface{}) *sql.Row {
 func (t *Transaction) query(query string, args ...interface{}) (*sql.Rows, error) {
 	t.dbmap.trace(query, args...)
 	return t.tx.Query(query, args...)
+}
+
+func (t *Transaction) SetGtid(gtid string) {
+	t.gtid = gtid
+}
+
+func (t *Transaction) GTID() string {
+	return t.gtid
 }
 
 ///////////////
