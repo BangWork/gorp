@@ -8,21 +8,21 @@
 //
 // Source code and project home:
 // https://github.com/coopernurse/gorp
-//
 package gorp
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"database/sql/driver"
 	"errors"
 	"fmt"
+	"log"
+	"os"
 	"reflect"
 	"regexp"
 	"strings"
 	"time"
-	"log"
-	"os"
 )
 
 // Oracle String (empty string is null)
@@ -146,9 +146,8 @@ func (me CustomScanner) Bind() error {
 //
 // Example:
 //
-//     dialect := gorp.MySQLDialect{"InnoDB", "UTF8"}
-//     dbmap := &gorp.DbMap{Db: db, Dialect: dialect}
-//
+//	dialect := gorp.MySQLDialect{"InnoDB", "UTF8"}
+//	dbmap := &gorp.DbMap{Db: db, Dialect: dialect}
 type DbMap struct {
 	// Db handle to use with this map
 	Db *sql.DB
@@ -161,6 +160,7 @@ type DbMap struct {
 	tables    []*TableMap
 	logger    GorpLogger
 	logPrefix string
+	ctx       context.Context
 }
 
 // TableMap represents a mapping between a Go struct and a database table
@@ -198,7 +198,6 @@ func (t *TableMap) ResetSql() {
 // Automatically calls ResetSql() to ensure SQL statements are regenerated.
 //
 // Panics if isAutoIncr is true, and fieldNames length != 1
-//
 func (t *TableMap) SetKeys(isAutoIncr bool, fieldNames ...string) *TableMap {
 	if isAutoIncr && len(fieldNames) != 1 {
 		panic(fmt.Sprintf(
@@ -224,7 +223,6 @@ func (t *TableMap) SetKeys(isAutoIncr bool, fieldNames ...string) *TableMap {
 // Automatically calls ResetSql() to ensure SQL statements are regenerated.
 //
 // Panics if fieldNames length < 2.
-//
 func (t *TableMap) SetUniqueTogether(fieldNames ...string) *TableMap {
 	if len(fieldNames) < 2 {
 		panic(fmt.Sprintf(
@@ -571,7 +569,6 @@ type ColumnMap struct {
 // Rename allows you to specify the column name in the table
 //
 // Example:  table.ColMap("Updated").Rename("date_updated")
-//
 func (c *ColumnMap) Rename(colname string) *ColumnMap {
 	c.ColumnName = colname
 	return c
@@ -673,6 +670,20 @@ func (m *DbMap) TraceOn(prefix string, logger GorpLogger) {
 func (m *DbMap) TraceOff() {
 	m.logger = nil
 	m.logPrefix = ""
+}
+
+// WithContext returns a new DbMap with the given context.
+// with this DbMap, the context is used for all queries and transactions.
+func (m *DbMap) WithContext(ctx context.Context) *DbMap {
+	return &DbMap{
+		Db:            m.Db,
+		Dialect:       m.Dialect,
+		TypeConverter: m.TypeConverter,
+		tables:        m.tables,
+		logger:        m.logger,
+		logPrefix:     m.logPrefix,
+		ctx:           ctx,
+	}
 }
 
 // AddTable registers the given interface type with gorp. The table name
@@ -1047,7 +1058,11 @@ func (m *DbMap) Select(i interface{}, query string, args ...interface{}) ([]inte
 // This is equivalent to running:  Exec() using database/sql
 func (m *DbMap) Exec(query string, args ...interface{}) (sql.Result, error) {
 	m.trace(query, args...)
-	return m.Db.Exec(query, args...)
+	ctx := m.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return m.Db.ExecContext(ctx, query, args...)
 }
 
 // SelectInt is a convenience wrapper around the gorp.SelectInt function
@@ -1088,7 +1103,13 @@ func (m *DbMap) SelectOne(holder interface{}, query string, args ...interface{})
 // Begin starts a gorp Transaction
 func (m *DbMap) Begin() (*Transaction, error) {
 	m.trace("begin;")
-	tx, err := m.Db.Begin()
+	var tx *sql.Tx
+	var err error
+	if m.ctx == nil {
+		tx, err = m.Db.Begin()
+	} else {
+		tx, err = m.Db.BeginTx(m.ctx, nil)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -1150,12 +1171,20 @@ func (m *DbMap) tableForPointer(ptr interface{}, checkPK bool) (*TableMap, refle
 
 func (m *DbMap) queryRow(query string, args ...interface{}) *sql.Row {
 	m.trace(query, args...)
-	return m.Db.QueryRow(query, args...)
+	ctx := m.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return m.Db.QueryRowContext(ctx, query, args...)
 }
 
 func (m *DbMap) query(query string, args ...interface{}) (*sql.Rows, error) {
 	m.trace(query, args...)
-	return m.Db.Query(query, args...)
+	ctx := m.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return m.Db.QueryContext(ctx, query, args...)
 }
 
 func (m *DbMap) trace(query string, args ...interface{}) {
@@ -1190,6 +1219,14 @@ func argsString(args ...interface{}) string {
 }
 
 ///////////////
+
+func (t *Transaction) WithContext(ctx context.Context) SqlExecutor {
+	return &Transaction{
+		dbmap:  t.dbmap,
+		tx:     t.tx,
+		closed: t.closed,
+	}
+}
 
 // Insert has the same behavior as DbMap.Insert(), but runs in a transaction.
 func (t *Transaction) Insert(list ...interface{}) error {
@@ -1403,10 +1440,9 @@ func SelectNullStr(e SqlExecutor, query string, args ...interface{}) (sql.NullSt
 // SelectOne executes the given query (which should be a SELECT statement)
 // and binds the result to holder, which must be a pointer.
 //
-// If no row is found, an error (sql.ErrNoRows specifically) will be returned
+// # If no row is found, an error (sql.ErrNoRows specifically) will be returned
 //
 // If more than one row is found, an error will be returned.
-//
 func SelectOne(m *DbMap, e SqlExecutor, holder interface{}, query string, args ...interface{}) error {
 	t := reflect.TypeOf(holder)
 	if t.Kind() == reflect.Ptr {
