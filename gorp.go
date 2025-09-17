@@ -281,6 +281,7 @@ type bindPlan struct {
 	versField         string
 	autoIncrIdx       int
 	autoIncrFieldName string
+	setColumnCount    int
 	once              sync.Once
 }
 
@@ -404,6 +405,9 @@ func (t *TableMap) bindUpdate(elem reflect.Value) (bindInstance, error) {
 
 		for y := range t.Columns {
 			col := t.Columns[y]
+			if col.isPK {
+				continue
+			}
 			if !col.isAutoIncr && !col.Transient {
 				if x > 0 {
 					s.WriteString(", ")
@@ -421,6 +425,7 @@ func (t *TableMap) bindUpdate(elem reflect.Value) (bindInstance, error) {
 				x++
 			}
 		}
+		plan.setColumnCount = x
 
 		s.WriteString(" where ")
 		for y := range t.keys {
@@ -447,6 +452,10 @@ func (t *TableMap) bindUpdate(elem reflect.Value) (bindInstance, error) {
 
 		plan.query = s.String()
 	})
+
+	if plan.setColumnCount == 0 {
+		return bindInstance{}, fmt.Errorf("gorp: no updatable columns for table %s", t.TableName)
+	}
 
 	return plan.createBindInstance(elem, t.dbmap.TypeConverter)
 }
