@@ -1,3 +1,3 @@
-module gopkg.in/gorp.v1
+module github.com/bangwork/gorp
 
 go 1.18
