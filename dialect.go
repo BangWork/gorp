@@ -1,6 +1,7 @@
 package gorp
 
 import (
+	"database/sql"
 	"errors"
 	"fmt"
 	"reflect"
@@ -251,7 +252,7 @@ func (d PostgresDialect) AutoIncrBindValue() string {
 }
 
 func (d PostgresDialect) AutoIncrInsertSuffix(col *ColumnMap) string {
-	return " returning " + col.ColumnName
+	return " returning " + d.QuoteField(col.ColumnName)
 }
 
 // Returns suffix
@@ -280,7 +281,10 @@ func (d PostgresDialect) InsertAutoIncrToTarget(exec SqlExecutor, insertSql stri
 		return err
 	}
 
-	return errors.New("No serial value returned for insert: " + insertSql + " Encountered error: " + rows.Err().Error())
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	return sql.ErrNoRows
 }
 
 func (d PostgresDialect) QuoteField(f string) string {

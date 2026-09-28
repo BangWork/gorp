@@ -12,6 +12,7 @@ package gorp
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"database/sql/driver"
 	"errors"
@@ -1174,16 +1175,23 @@ func (m *DbMap) SelectOne(holder interface{}, query string, args ...interface{})
 
 // Begin starts a gorp Transaction
 func (m *DbMap) Begin() (*Transaction, error) {
+	return m.BeginTx(context.Background(), nil)
+}
+
+// BeginTx starts a transaction on this map's existing pool.
+// Nil options use the database defaults.
+func (m *DbMap) BeginTx(ctx context.Context, options *sql.TxOptions) (*Transaction, error) {
 	m.trace("begin;")
-	tx, err := m.Db.Begin()
+	tx, err := m.Db.BeginTx(ctx, options)
 	if err != nil {
 		return nil, err
 	}
-	gorpTx := &Transaction{m, tx, false, ""}
+	gorpTx := &Transaction{dbmap: m, tx: tx}
 	if m.dbBrand != "" && len(m.postBeginHooks) > 0 {
 		for i, hook := range m.postBeginHooks {
 			if err := hook(gorpTx); err != nil {
-				return nil, fmt.Errorf("post begin hook %d failed: %v", i, err)
+				_ = gorpTx.Rollback()
+				return nil, fmt.Errorf("post begin hook %d failed: %w", i, err)
 			}
 		}
 	}
@@ -1193,6 +1201,12 @@ func (m *DbMap) Begin() (*Transaction, error) {
 func (m *DbMap) SetPostBeginHooks(hooks ...func(*Transaction) error) {
 	m.postBeginHooks = append(m.postBeginHooks, hooks...)
 }
+
+// RawTx returns the existing database/sql transaction, never a new connection.
+func (t *Transaction) RawTx() *sql.Tx { return t.tx }
+
+// DBMap returns the map that created this transaction.
+func (t *Transaction) DBMap() *DbMap { return t.dbmap }
 
 // TableFor returns the *TableMap corresponding to the given Go Type
 // If no table is mapped to that type an error is returned.
