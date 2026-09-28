@@ -193,11 +193,20 @@ func (d SqliteDialect) IfTableNotExists(command, schema, table string) string {
 
 type PostgresDialect struct {
 	suffix string
+
+	// CompatibleSQL generates SQL for a driver that translates MySQL syntax
+	// to PostgreSQL. Generated integer IDs require driver LastInsertId support.
+	// The zero value generates native PostgreSQL SQL with RETURNING.
+	// Configure this before mapping tables; generated statements are cached.
+	CompatibleSQL bool
 }
 
 func (d PostgresDialect) QuerySuffix() string { return ";" }
 
 func (d PostgresDialect) ToSqlType(val reflect.Type, maxsize int, isAutoIncr bool) string {
+	if d.CompatibleSQL {
+		return MySQLDialect{}.ToSqlType(val, maxsize, isAutoIncr)
+	}
 	switch val.Kind() {
 	case reflect.Ptr:
 		return d.ToSqlType(val.Elem(), maxsize, isAutoIncr)
@@ -242,8 +251,10 @@ func (d PostgresDialect) ToSqlType(val reflect.Type, maxsize int, isAutoIncr boo
 
 }
 
-// Returns empty string
 func (d PostgresDialect) AutoIncrStr() string {
+	if d.CompatibleSQL {
+		return "auto_increment"
+	}
 	return ""
 }
 
@@ -252,6 +263,9 @@ func (d PostgresDialect) AutoIncrBindValue() string {
 }
 
 func (d PostgresDialect) AutoIncrInsertSuffix(col *ColumnMap) string {
+	if d.CompatibleSQL {
+		return ""
+	}
 	return " returning " + d.QuoteField(col.ColumnName)
 }
 
@@ -264,12 +278,17 @@ func (d PostgresDialect) TruncateClause() string {
 	return "truncate"
 }
 
-// Returns "$(i+1)"
 func (d PostgresDialect) BindVar(i int) string {
+	if d.CompatibleSQL {
+		return "?"
+	}
 	return fmt.Sprintf("$%d", i+1)
 }
 
 func (d PostgresDialect) InsertAutoIncrToTarget(exec SqlExecutor, insertSql string, target interface{}, params ...interface{}) error {
+	if d.CompatibleSQL {
+		return insertCompatibleAutoIncrToTarget(exec, insertSql, target, params...)
+	}
 	rows, err := exec.query(insertSql, params...)
 	if err != nil {
 		return err
@@ -287,7 +306,42 @@ func (d PostgresDialect) InsertAutoIncrToTarget(exec SqlExecutor, insertSql stri
 	return sql.ErrNoRows
 }
 
+func insertCompatibleAutoIncrToTarget(exec SqlExecutor, insertSql string, target interface{}, params ...interface{}) error {
+	value := reflect.ValueOf(target)
+	if value.Kind() != reflect.Ptr || value.IsNil() {
+		return fmt.Errorf("gorp: compatible generated ID target must be a non-nil integer pointer, got %T", target)
+	}
+	value = value.Elem()
+	var signed bool
+	switch value.Kind() {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		signed = true
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+	default:
+		return fmt.Errorf("gorp: compatible generated ID target must be an integer pointer, got %T", target)
+	}
+	id, err := standardInsertAutoIncr(exec, insertSql, params...)
+	if err != nil {
+		return err
+	}
+	if signed {
+		if value.OverflowInt(id) {
+			return fmt.Errorf("gorp: generated ID overflows %s", value.Type())
+		}
+		value.SetInt(id)
+		return nil
+	}
+	if id < 0 || value.OverflowUint(uint64(id)) {
+		return fmt.Errorf("gorp: generated ID overflows %s", value.Type())
+	}
+	value.SetUint(uint64(id))
+	return nil
+}
+
 func (d PostgresDialect) QuoteField(f string) string {
+	if d.CompatibleSQL {
+		return "`" + strings.ReplaceAll(f, "`", "``") + "`"
+	}
 	return `"` + strings.ToLower(f) + `"`
 }
 
